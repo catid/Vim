@@ -193,8 +193,14 @@ class Mamba(nn.Module):
                     delta_bias=self.dt_proj.bias.float(),
                     delta_softplus=True,
                 )
+
+                # Proposed: Instead of just working backwards, go down columns instead of rows
+                #patch_side_length = int(xz.shape[-1] ** 0.5)
+                #xz_transposed = rearrange(xz, 'b d (h w) -> b d (w h)', h=patch_side_length, w=patch_side_length)
+                xz_transposed = xz.flip([-1])
+
                 out_b = mamba_inner_fn_no_out_proj(
-                    xz.flip([-1]),
+                    xz_transposed,
                     self.conv1d_b.weight,
                     self.conv1d_b.bias,
                     self.x_proj_b.weight,
