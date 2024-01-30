@@ -120,7 +120,7 @@ class Mamba(nn.Module):
         self.D._no_weight_decay = True
 
         # bidirectional
-        assert bimamba_type == "v2"
+        assert bimamba_type == "v2" or bimamba_type == "v2d"
 
         A_b = repeat(
             torch.arange(1, self.d_state + 1, dtype=torch.float32, device=device),
@@ -178,7 +178,7 @@ class Mamba(nn.Module):
         A = -torch.exp(self.A_log.float())  # (d_inner, d_state)
         # In the backward pass we write dx and dz next to each other to avoid torch.cat
         if self.use_fast_path and inference_params is None:  # Doesn't support outputting the states
-            if self.bimamba_type == "v2":
+            if self.bimamba_type == "v2" or self.bimamba_type == "v2d":
                 A_b = -torch.exp(self.A_b_log.float())
                 out = mamba_inner_fn_no_out_proj(
                     xz,
@@ -194,10 +194,23 @@ class Mamba(nn.Module):
                     delta_softplus=True,
                 )
 
-                # Proposed: Instead of just working backwards, go down columns instead of rows
-                #patch_side_length = int(xz.shape[-1] ** 0.5)
-                #xz_transposed = rearrange(xz, 'b d (h w) -> b d (w h)', h=patch_side_length, w=patch_side_length)
                 xz_transposed = xz.flip([-1])
+
+                if self.bimamba_type == "v2d":
+                    # Transpose in 2D (assumes input shape is square)
+                    # Note: Class token is at the front initially, so after flipping it's now at the back.
+                    patch_side_length = int(xz.shape[-1] ** 0.5 + 0.5)
+                    is_square = xz.shape[-1] == patch_side_length * patch_side_length
+
+                    if is_square:
+                        xz_transposed = rearrange(xz, 'b d (h w) -> b d (w h)', h=patch_side_length, w=patch_side_length)
+                    else:
+                        patch = xz[..., :patch_side_length**2]  # First N*N elements
+                        remaining = xz[..., patch_side_length**2:]   # Remaining elements
+
+                        patch_transposed = rearrange(patch, 'b d (h w) -> b d (w h)', h=patch_side_length, w=patch_side_length)
+
+                        xz_transposed = torch.cat([remaining, patch_transposed], dim=-1)
 
                 out_b = mamba_inner_fn_no_out_proj(
                     xz_transposed,

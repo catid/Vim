@@ -43,14 +43,14 @@ Recently the state space models (SSMs) with efficient hardware-aware designs, i.
 
   - `conda create -n your_env_name python=3.10.13`
 
-- torch 2.1.1 + cu118
-  - `pip install torch==2.1.1 torchvision==0.16.1 torchaudio==2.1.1 --index-url https://download.pytorch.org/whl/cu118`
+- Latest torch (should match system CUDA version for the following steps)
+  - `pip install torch torchvision torchaudio`
 
 - Requirements: vim_requirements.txt
   - `pip install -r vim/vim_requirements.txt`
 
 - Install ``causal_conv1d`` and ``mamba``
-  - `pip install -e causal_conv1d`
+  - `pip install -e causal-conv1d`
   - `pip install -e mamba`
   
   
@@ -58,7 +58,21 @@ Recently the state space models (SSMs) with efficient hardware-aware designs, i.
 
 ## Train Your Vim
 
-`bash vim/scripts/pt-vim-t.sh`
+Download ImageNet e.g. https://github.com/PatrickHua/EasyImageNet
+
+Example training using 4 computers each with 2 GPUs, with ImageNet stored on a NAS which is NFS mounted at `/mnt/Media/imagenet`:
+
+Run this command on each computer, changing `--node_rank` for each one to 0,1,2,3.  Update the `master_addr` to specify one of the machines as a rendezvous server.
+
+```bash
+torchrun --nproc_per_node=2 --nnodes=4 --node_rank=0 --master_addr="gpu4.lan" --master_port=12345 main.py --model vim_tiny_patch16_224_bimambav2_final_pool_mean_abs_pos_embed_rope_also_residual_with_cls_token --batch-size 128 --num_workers 24 --data-set IMNET --data-path /mnt/Media/imagenet --output_dir ./output/mymodel --no_amp
+```
+
+Using `--batch-size 64` might be a better idea but I chose 128 so sticking to that.
+
+Set `--num_workers 24` to the number of processors on each server.
+
+Specify `--no_amp` because training is unstable without it and fails around epoch 85.
 
 ## Model Weights
 
