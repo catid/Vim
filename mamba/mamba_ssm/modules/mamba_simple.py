@@ -31,6 +31,29 @@ except ImportError:
     RMSNorm, layer_norm_fn, rms_norm_fn = None, None, None
 
 
+def transpose_patches(tokens):
+    token_count = tokens.shape[-1]
+    patch_side_length = int(token_count ** 0.5 + 0.5)
+    num_patches = patch_side_length * patch_side_length
+    if num_patches > token_count:
+        patch_side_length -= 1
+        num_patches = patch_side_length * patch_side_length
+
+    if num_patches <= 1:
+        return tokens
+
+    num_extra_tokens = token_count - num_patches
+
+    if num_extra_tokens == 0:
+        return rearrange(tokens, 'b d (h w) -> b d (w h)', h=patch_side_length, w=patch_side_length)
+
+    patches = tokens[:, :, :-num_extra_tokens]
+    pos_tokens = tokens[:, :, -num_extra_tokens:]
+
+    patch_transposed = rearrange(patches, 'b d (h w) -> b d (w h)', h=patch_side_length, w=patch_side_length)
+    return torch.cat([patch_transposed, pos_tokens], dim=-1)
+
+
 class Mamba(nn.Module):
     def __init__(
         self,
@@ -197,20 +220,7 @@ class Mamba(nn.Module):
                 xz_transposed = xz.flip([-1])
 
                 if self.bimamba_type == "v2d":
-                    # Transpose in 2D (assumes input shape is square)
-                    # Note: Class token is at the front initially, so after flipping it's now at the back.
-                    patch_side_length = int(xz.shape[-1] ** 0.5 + 0.5)
-                    is_square = xz.shape[-1] == patch_side_length * patch_side_length
-
-                    if is_square:
-                        xz_transposed = rearrange(xz, 'b d (h w) -> b d (w h)', h=patch_side_length, w=patch_side_length)
-                    else:
-                        patch = xz[..., :patch_side_length**2]  # First N*N elements
-                        remaining = xz[..., patch_side_length**2:]   # Remaining elements
-
-                        patch_transposed = rearrange(patch, 'b d (h w) -> b d (w h)', h=patch_side_length, w=patch_side_length)
-
-                        xz_transposed = torch.cat([remaining, patch_transposed], dim=-1)
+                    xz_transposed = transpose_patches(xz_transposed)
 
                 out_b = mamba_inner_fn_no_out_proj(
                     xz_transposed,
@@ -225,6 +235,10 @@ class Mamba(nn.Module):
                     delta_bias=self.dt_proj_b.bias.float(),
                     delta_softplus=True,
                 )
+
+                if self.bimamba_type == "v2d":
+                    xz_transposed = transpose_patches(xz_transposed)
+
                 # F.linear(rearrange(out_z, "b d l -> b l d"), out_proj_weight, out_proj_bias)
                 out = F.linear(rearrange(out + out_b.flip([-1]), "b d l -> b l d"), self.out_proj.weight, self.out_proj.bias)
             else:
